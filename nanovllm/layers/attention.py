@@ -1,3 +1,5 @@
+"""Implémente l'attention avec gestion du cache KV."""
+
 import torch
 from torch import nn
 import triton
@@ -30,6 +32,7 @@ def store_kvcache_kernel(
 
 
 def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, slot_mapping: torch.Tensor):
+    """Copie les clés et valeurs au bon endroit dans le cache."""
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
     assert key.stride(-1) == 1 and value.stride(-1) == 1
@@ -40,6 +43,7 @@ def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor,
 
 
 class Attention(nn.Module):
+    """Bloc d'attention compatible avec FlashAttention."""
 
     def __init__(
         self,
@@ -56,6 +60,7 @@ class Attention(nn.Module):
         self.k_cache = self.v_cache = torch.tensor([])
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        """Calcule l'attention tout en mettant à jour le cache."""
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
         k = k.view(-1, self.num_kv_heads, self.head_dim)

@@ -1,3 +1,5 @@
+"""Représente l'état d'une séquence en cours de génération."""
+
 from copy import copy
 from enum import Enum, auto
 from itertools import count
@@ -12,10 +14,13 @@ class SequenceStatus(Enum):
 
 
 class Sequence:
+    """Objet stockant toutes les informations d'une requête."""
+
     block_size = 256
     counter = count()
 
     def __init__(self, token_ids: list[int], sampling_params: SamplingParams):
+        """Crée une nouvelle séquence à partir d'un prompt tokenisé."""
         self.seq_id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
@@ -29,9 +34,11 @@ class Sequence:
         self.ignore_eos = sampling_params.ignore_eos
 
     def __len__(self):
+        """Permet d'obtenir ``len(seq)``."""
         return self.num_tokens
 
     def __getitem__(self, key):
+        """Accès direct aux tokens comme dans une liste."""
         return self.token_ids[key]
 
     @property
@@ -63,15 +70,18 @@ class Sequence:
         return self.num_tokens - (self.num_blocks - 1) * self.block_size
 
     def block(self, i):
+        """Renvoie le i-ème bloc de tokens."""
         assert 0 <= i < self.num_blocks
         return self.token_ids[i*self.block_size: (i+1)*self.block_size]
 
     def append_token(self, token_id: int):
+        """Ajoute un token généré à la séquence."""
         self.token_ids.append(token_id)
         self.last_token = token_id
         self.num_tokens += 1
 
     def __getstate__(self):
+        """Sérialise l'état minimal utile pour envoyer la séquence."""
         state = {
             "num_tokens": self.num_tokens,
             "num_prompt_tokens": self.num_prompt_tokens,

@@ -1,9 +1,12 @@
+"""Stocke les informations nécessaires entre les différentes opérations."""
+
 from dataclasses import dataclass
 import torch
 
 
 @dataclass
 class Context:
+    """Structure mutable partagée durant l'inférence."""
     is_prefill: bool = False
     cu_seqlens_q: torch.Tensor | None = None
     cu_seqlens_k: torch.Tensor | None = None
@@ -16,12 +19,15 @@ class Context:
 _CONTEXT = Context()
 
 def get_context():
+    """Retourne le contexte courant."""
     return _CONTEXT
 
 def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0, slot_mapping=None, context_lens=None, block_tables=None):
+    """Met à jour le contexte global avec les nouvelles valeurs."""
     global _CONTEXT
     _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, context_lens, block_tables)
 
 def reset_context():
+    """Réinitialise le contexte à son état par défaut."""
     global _CONTEXT
     _CONTEXT = Context()

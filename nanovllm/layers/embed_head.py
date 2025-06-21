@@ -1,3 +1,5 @@
+"""Gestion des embeddings et de la tête de langage parallélisée."""
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -7,6 +9,7 @@ from nanovllm.utils.context import get_context
 
 
 class VocabParallelEmbedding(nn.Module):
+    """Découpe le vocabulaire entre les GPUs."""
 
     def __init__(
         self,
@@ -25,6 +28,7 @@ class VocabParallelEmbedding(nn.Module):
         self.weight.weight_loader = self.weight_loader
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        """Charge le shard correspondant aux poids d'un GPU."""
         param_data = param.data
         shard_size = param_data.size(0)
         start_idx = self.tp_rank * shard_size
@@ -33,6 +37,7 @@ class VocabParallelEmbedding(nn.Module):
         param_data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor):
+        """Réalise l'opération d'embedding en tenant compte du sharding."""
         if self.tp_size > 1:
             mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)
             x = mask * (x - self.vocab_start_idx)
@@ -44,6 +49,7 @@ class VocabParallelEmbedding(nn.Module):
 
 
 class ParallelLMHead(VocabParallelEmbedding):
+    """Tête de langage parallèle partageant les mêmes mécanismes."""
 
     def __init__(
         self,
@@ -59,6 +65,7 @@ class ParallelLMHead(VocabParallelEmbedding):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor):
+        """Calcule les logits de sortie, en phase prefill ou decode."""
         context = get_context()
         if context.is_prefill:
             last_indices = context.cu_seqlens_q[1:] - 1

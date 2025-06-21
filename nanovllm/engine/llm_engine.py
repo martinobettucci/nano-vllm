@@ -1,3 +1,10 @@
+"""Implémentation principale du moteur d'inférence.
+
+Cette classe orchestre l'exécution d'un modèle en gérant la création
+des différents processus (un par GPU), la planification des séquences et
+les échanges avec le *ModelRunner*.
+"""
+
 import atexit
 from dataclasses import fields
 from time import perf_counter
@@ -13,20 +20,33 @@ from nanovllm.engine.model_runner import ModelRunner
 
 
 class LLMEngine:
+    """Coordonne la génération sur un ou plusieurs GPU."""
 
     def __init__(self, model, **kwargs):
+        """Initialise le moteur et les processus de calcul.
+
+        Parameters
+        ----------
+        model : str
+            Chemin vers les poids du modèle.
+        **kwargs : dict
+            Autres options de :class:`Config` à surcharger.
+        """
+
         config_fileds = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fileds}
         config = Config(model, **config_kwargs)
         self.ps = []
         self.events = []
         ctx = mp.get_context("spawn")
+        # Création des processus secondaires pour le parallélisme tensoriel
         for i in range(1, config.tensor_parallel_size):
             event = ctx.Event()
             process = ctx.Process(target=ModelRunner, args=(config, i, event))
             process.start()
             self.ps.append(process)
             self.events.append(event)
+        # Le process principal instancie également un ModelRunner
         self.model_runner = ModelRunner(config, 0, self.events)
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
@@ -34,18 +54,25 @@ class LLMEngine:
         atexit.register(self.exit)
 
     def exit(self):
+        """Ferme proprement tous les processus lancés."""
         self.model_runner.call("exit")
         del self.model_runner
         for p in self.ps:
             p.join()
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
+        """Enfile une nouvelle séquence à générer."""
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
         seq = Sequence(prompt, sampling_params)
         self.scheduler.add(seq)
 
     def step(self):
+        """Effectue une itération de génération.
+
+        Retourne les sorties finalisées et le nombre de tokens traités
+        lors de cette étape (positif en préfill, négatif en décodage).
+        """
         seqs, is_prefill = self.scheduler.schedule()
         token_ids = self.model_runner.call("run", seqs, is_prefill)
         self.scheduler.postprocess(seqs, token_ids)
@@ -54,6 +81,7 @@ class LLMEngine:
         return outputs, num_tokens
 
     def is_finished(self):
+        """Indique s'il reste des séquences en cours."""
         return self.scheduler.is_finished()
 
     def generate(
@@ -62,6 +90,7 @@ class LLMEngine:
         sampling_params: SamplingParams | list[SamplingParams],
         use_tqdm: bool = True,
     ) -> list[str]:
+        """Génère les complétions pour une liste de prompts."""
         if use_tqdm:
             pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
         if not isinstance(sampling_params, list):
@@ -72,6 +101,7 @@ class LLMEngine:
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():
             t = perf_counter()
+            # On traite une étape du scheduler et on récupère les nouveaux tokens
             output, num_tokens = self.step()
             if use_tqdm:
                 if num_tokens > 0:

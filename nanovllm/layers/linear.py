@@ -1,15 +1,19 @@
 import torch
 from torch import nn
+"""Couches linéaires spécialisées pour le parallélisme tensoriel."""
+
 import torch.nn.functional as F
 import torch.distributed as dist
 
 
 def divide(numerator, denominator):
+    """Division entière avec vérification utile pour le sharding."""
     assert numerator % denominator == 0
     return numerator // denominator
 
 
 class LinearBase(nn.Module):
+    """Base commune à toutes les couches linéaires parallélisées."""
 
     def __init__(
         self,
@@ -29,6 +33,7 @@ class LinearBase(nn.Module):
 
 
 class ReplicatedLinear(LinearBase):
+    """Version non parallélisée (poids répliqués)."""
 
     def __init__(
         self,
@@ -46,6 +51,7 @@ class ReplicatedLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        """Charge directement le poids sans découpe."""
         assert param.size() == loaded_weight.size()
         param.data.copy_(loaded_weight)
 
@@ -54,6 +60,7 @@ class ReplicatedLinear(LinearBase):
 
 
 class ColumnParallelLinear(LinearBase):
+    """Couche linéaire où les sorties sont shardées en colonnes."""
 
     def __init__(
         self,
@@ -74,6 +81,7 @@ class ColumnParallelLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        """Extrait la portion pertinente du poids fourni."""
         param_data = param.data
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
@@ -86,6 +94,7 @@ class ColumnParallelLinear(LinearBase):
 
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
+    """Plusieurs sorties concaténées pour éviter les allocations."""
 
     def __init__(
         self,
@@ -97,6 +106,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         super().__init__(input_size, sum(output_sizes), bias=bias)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int):
+        """Charge un sous-poids spécifique (q, k ou v)."""
         param_data = param.data
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
@@ -107,6 +117,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
 
 class QKVParallelLinear(ColumnParallelLinear):
+    """Projection des têtes Q, K et V en un seul appel."""
 
     def __init__(
         self,
@@ -145,6 +156,7 @@ class QKVParallelLinear(ColumnParallelLinear):
 
 
 class RowParallelLinear(LinearBase):
+    """Couche linéaire où les entrées sont shardées en lignes."""
 
     def __init__(
         self,
@@ -165,6 +177,7 @@ class RowParallelLinear(LinearBase):
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        """Récupère la part de poids correspondant à ce GPU."""
         param_data = param.data
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size

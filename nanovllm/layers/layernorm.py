@@ -1,8 +1,11 @@
+"""Implémentation légère de RMSNorm."""
+
 import torch
 from torch import nn
 
 
 class RMSNorm(nn.Module):
+    """Normalisation racine-mean-square avec option de résiduel."""
 
     def __init__(
         self,
@@ -45,6 +48,7 @@ class RMSNorm(nn.Module):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Applique la normalisation seule ou avec ajout de résiduel."""
         if residual is None:
             return self.rms_forward(x)
         else:

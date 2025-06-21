@@ -1,3 +1,5 @@
+"""Script de benchmark pour mesurer la vitesse d'inférence."""
+
 import os
 import time
 from random import randint, seed
@@ -6,6 +8,7 @@ from nanovllm import LLM, SamplingParams
 
 
 def main():
+    """Génère des séquences aléatoires et mesure le débit obtenu."""
     seed(0)
     num_seqs = 256
     max_input_len = 1024

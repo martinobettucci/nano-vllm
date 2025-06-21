@@ -1,3 +1,11 @@
+"""Exécution du modèle sur un GPU donné.
+
+`ModelRunner` charge le modèle, prépare le cache KV et exécute les
+inférences pour un sous-ensemble de la parallélisation tensorielle. Il
+peut fonctionner dans un processus séparé afin de s'adapter au nombre de
+GPU disponibles.
+"""
+
 import pickle
 import torch
 import torch.distributed as dist
@@ -13,8 +21,10 @@ from nanovllm.utils.loader import load_model
 
 
 class ModelRunner:
+    """Pilote d'un sous-modèle sur un GPU."""
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event]):
+        """Prépare le modèle et la communication inter-processus."""
         self.config = config
         hf_config = config.hf_config
         self.block_size = config.kvcache_block_size
@@ -47,6 +57,7 @@ class ModelRunner:
                 self.loop()
 
     def exit(self):
+        """Libère les ressources GPU et ferme la communication."""
         if self.world_size > 1:
             self.shm.close()
             dist.barrier()
@@ -58,6 +69,7 @@ class ModelRunner:
         dist.destroy_process_group()
 
     def loop(self):
+        """Boucle de réception des commandes envoyées par le processus maître."""
         while True:
             method_name, args = self.read_shm()
             self.call(method_name, *args)
@@ -65,6 +77,7 @@ class ModelRunner:
                 break
 
     def read_shm(self):
+        """Lit les données envoyées via la mémoire partagée."""
         assert self.world_size > 1 and self.rank
         self.event.wait()
         n = int.from_bytes(self.shm.buf[0:4], "little")
@@ -73,6 +86,7 @@ class ModelRunner:
         return method_name, args
 
     def write_shm(self, method_name, *args):
+        """Écrit une commande à destination du sous-processus."""
         assert self.world_size > 1 and not self.rank
         data = pickle.dumps([method_name, *args])
         n = len(data)
@@ -83,6 +97,7 @@ class ModelRunner:
             event.set()
 
     def call(self, method_name, *args):
+        """Appelle une méthode locale ou distante selon le rang."""
         if self.world_size > 1 and self.rank == 0:
             self.write_shm(method_name, *args)
         method = getattr(self, method_name, None)
@@ -90,6 +105,7 @@ class ModelRunner:
         return method(*args)
 
     def allocate_kv_cache(self, gpu_memory_utilization):
+        """Alloue le cache KV en tenant compte de la mémoire disponible."""
         config = self.config
         hf_config = config.hf_config
         free, total = torch.cuda.mem_get_info()
@@ -106,6 +122,7 @@ class ModelRunner:
                 layer_id += 1
 
     def prepare_block_tables(self, seqs: list[Sequence]):
+        """Prépare la table des blocs pour les appels à FlashAttention."""
         max_len = max(len(seq.block_table) for seq in seqs)
         block_tables = [
             seq.block_table + [-1] * (max_len - len(seq.block_table))
@@ -115,6 +132,7 @@ class ModelRunner:
         return block_tables
 
     def prepare_prefill(self, seqs: list[Sequence]):
+        """Met en forme les données pour la phase de pré-remplissage."""
         input_ids = []
         positions = []
         cu_seqlens_q = [0]
@@ -152,6 +170,7 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_decode(self, seqs: list[Sequence]):
+        """Prépare les données nécessaires lors du décodage (token par token)."""
         input_ids = []
         positions = []
         slot_mapping = []
@@ -170,6 +189,7 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):
+        """Rassemble les températures d'échantillonnage pour chaque séquence."""
         temperatures = []
         for seq in seqs:
             temperatures.append(seq.temperature)
@@ -178,6 +198,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill):
+        """Exécute le modèle en mode préfill ou decode."""
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
@@ -195,6 +216,7 @@ class ModelRunner:
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
     def reset_graph_vars(self):
+        """Remet à zéro les tenseurs utilisés par les CUDA graphs."""
         graph_vars = self.graph_vars
         graph_vars["input_ids"].zero_()
         graph_vars["positions"].zero_()
@@ -203,6 +225,7 @@ class ModelRunner:
         graph_vars["block_tables"].zero_()
     
     def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
+        """Chaîne toutes les étapes d'exécution du modèle."""
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill)
@@ -212,6 +235,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def capture_cudagraph(self):
+        """Enregistre des CUDA graphs pour accélérer le décodage."""
         get_rng_state = torch.cuda.get_rng_state
         set_rng_state = torch.cuda.set_rng_state
         rng_state = torch.cuda.get_rng_state()

@@ -6,11 +6,11 @@ peut fonctionner dans un processus séparé afin de s'adapter au nombre de
 GPU disponibles.
 """
 
-import pickle
-import torch
-import torch.distributed as dist
-from multiprocessing.synchronize import Event
-from multiprocessing.shared_memory import SharedMemory
+import pickle  # Sérialisation des données pour la communication
+import torch  # Bibliothèque principale PyTorch
+import torch.distributed as dist  # Outils de communication inter-GPU
+from multiprocessing.synchronize import Event  # Synchronisation entre process
+from multiprocessing.shared_memory import SharedMemory  # Zone mémoire partagée
 
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
@@ -108,8 +108,8 @@ class ModelRunner:
         """Alloue le cache KV en tenant compte de la mémoire disponible."""
         config = self.config
         hf_config = config.hf_config
-        free, total = torch.cuda.mem_get_info()
-        used = total - free
+        free, total = torch.cuda.mem_get_info()  # Mémoire GPU libre et totale
+        used = total - free  # Mémoire déjà utilisée
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * hf_config.head_dim * hf_config.torch_dtype.itemsize
         config.num_kvcache_blocks = int(total * gpu_memory_utilization - used) // block_bytes
@@ -190,10 +190,13 @@ class ModelRunner:
 
     def prepare_sample(self, seqs: list[Sequence]):
         """Rassemble les températures d'échantillonnage pour chaque séquence."""
-        temperatures = []
+        temperatures = []  # Liste des températures pour chaque séquence
         for seq in seqs:
             temperatures.append(seq.temperature)
-        temperatures = torch.tensor(temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
+        temperatures = (
+            torch.tensor(temperatures, dtype=torch.float32, pin_memory=True)
+            .cuda(non_blocking=True)
+        )
         return temperatures
 
     @torch.inference_mode()
@@ -202,7 +205,7 @@ class ModelRunner:
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            bs = input_ids.size(0)
+            bs = input_ids.size(0)  # Taille effective du batch
             context = get_context()
             self.reset_graph_vars()
             graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]

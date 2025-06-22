@@ -5,12 +5,12 @@ des différents processus (un par GPU), la planification des séquences et
 les échanges avec le *ModelRunner*.
 """
 
-import atexit
-from dataclasses import fields
-from time import perf_counter
-from tqdm.auto import tqdm
-from transformers import AutoTokenizer
-import torch.multiprocessing as mp
+import atexit  # Pour exécuter un nettoyage à la sortie du programme
+from dataclasses import fields  # Utilisé pour inspecter les champs du dataclass Config
+from time import perf_counter  # Mesure précise du temps
+from tqdm.auto import tqdm  # Barre de progression pratique
+from transformers import AutoTokenizer  # Tokeniseur HuggingFace
+import torch.multiprocessing as mp  # Gestion des processus GPU
 
 from nanovllm.config import Config
 from nanovllm.sampling_params import SamplingParams
@@ -33,36 +33,36 @@ class LLMEngine:
             Autres options de :class:`Config` à surcharger.
         """
 
-        config_fileds = {field.name for field in fields(Config)}
-        config_kwargs = {k: v for k, v in kwargs.items() if k in config_fileds}
-        config = Config(model, **config_kwargs)
-        self.ps = []
-        self.events = []
-        ctx = mp.get_context("spawn")
+        config_fileds = {field.name for field in fields(Config)}  # Liste des attributs configurables
+        config_kwargs = {k: v for k, v in kwargs.items() if k in config_fileds}  # Filtrage des paramètres
+        config = Config(model, **config_kwargs)  # Création de la configuration globale
+        self.ps = []  # Processus enfants
+        self.events = []  # Événements de synchronisation
+        ctx = mp.get_context("spawn")  # Contexte de multiprocessing compatible CUDA
         # Création des processus secondaires pour le parallélisme tensoriel
         for i in range(1, config.tensor_parallel_size):
-            event = ctx.Event()
+            event = ctx.Event()  # Signal pour communiquer avec le sous-processus
             process = ctx.Process(target=ModelRunner, args=(config, i, event))
-            process.start()
-            self.ps.append(process)
-            self.events.append(event)
-        # Le process principal instancie également un ModelRunner
+            process.start()  # Lancement du sous-processus
+            self.ps.append(process)  # Mémorisation du process
+            self.events.append(event)  # Mémorisation de l'événement associé
+        # Le processus principal instancie également un ModelRunner
         self.model_runner = ModelRunner(config, 0, self.events)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
-        config.eos = self.tokenizer.eos_token_id
-        self.scheduler = Scheduler(config)
-        atexit.register(self.exit)
+        self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)  # Chargement du tokenizer
+        config.eos = self.tokenizer.eos_token_id  # Token de fin de séquence
+        self.scheduler = Scheduler(config)  # Planificateur de séquences
+        atexit.register(self.exit)  # Nettoyage automatique en fin d'exécution
 
     def exit(self):
         """Ferme proprement tous les processus lancés."""
-        self.model_runner.call("exit")
-        del self.model_runner
-        for p in self.ps:
+        self.model_runner.call("exit")  # On notifie le ModelRunner principal
+        del self.model_runner  # On libère l'objet
+        for p in self.ps:  # On attend la fin des sous-processus
             p.join()
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
         """Enfile une nouvelle séquence à générer."""
-        if isinstance(prompt, str):
+        if isinstance(prompt, str):  # Conversion du prompt en IDs si besoin
             prompt = self.tokenizer.encode(prompt)
         seq = Sequence(prompt, sampling_params)
         self.scheduler.add(seq)
@@ -73,8 +73,8 @@ class LLMEngine:
         Retourne les sorties finalisées et le nombre de tokens traités
         lors de cette étape (positif en préfill, négatif en décodage).
         """
-        seqs, is_prefill = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
+        seqs, is_prefill = self.scheduler.schedule()  # Sélection des séquences à traiter
+        token_ids = self.model_runner.call("run", seqs, is_prefill)  # Exécution modèle
         self.scheduler.postprocess(seqs, token_ids)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len(seqs)
@@ -92,17 +92,16 @@ class LLMEngine:
     ) -> list[str]:
         """Génère les complétions pour une liste de prompts."""
         if use_tqdm:
-            pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
+            pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)  # Barre de progression
         if not isinstance(sampling_params, list):
-            sampling_params = [sampling_params] * len(prompts)
+            sampling_params = [sampling_params] * len(prompts)  # Un jeu de paramètres par prompt
         for prompt, sp in zip(prompts, sampling_params):
-            self.add_request(prompt, sp)
+            self.add_request(prompt, sp)  # Enregistrement de la requête
         outputs = {}
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():
-            t = perf_counter()
-            # On traite une étape du scheduler et on récupère les nouveaux tokens
-            output, num_tokens = self.step()
+            t = perf_counter()  # Début du chronomètre
+            output, num_tokens = self.step()  # Exécution d'une étape
             if use_tqdm:
                 if num_tokens > 0:
                     prefill_throughput = num_tokens / (perf_counter() - t)
@@ -113,10 +112,10 @@ class LLMEngine:
                     "Decode": f"{int(decode_throughput)}tok/s",
                 })
             for seq_id, token_ids in output:
-                outputs[seq_id] = token_ids
+                outputs[seq_id] = token_ids  # On stocke la sortie associée au seq_id
                 if use_tqdm:
                     pbar.update(1)
-        outputs = [outputs[seq_id] for seq_id in sorted(outputs)]
+        outputs = [outputs[seq_id] for seq_id in sorted(outputs)]  # Réordonnancement
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
         if use_tqdm:
             pbar.close()

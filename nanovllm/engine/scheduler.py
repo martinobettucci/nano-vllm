@@ -1,3 +1,5 @@
+"""Planification des séquences à exécuter sur le modèle."""
+
 from collections import deque
 
 from nanovllm.config import Config
@@ -6,8 +8,10 @@ from nanovllm.engine.block_manager import BlockManager
 
 
 class Scheduler:
+    """Décide de l'ordre d'exécution des séquences."""
 
     def __init__(self, config: Config):
+        """Initialise les files d'attente et le gestionnaire de blocs."""
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
@@ -16,12 +20,19 @@ class Scheduler:
         self.running: deque[Sequence] = deque()
 
     def is_finished(self):
+        """Retourne ``True`` lorsqu'aucune séquence n'est en attente."""
         return not self.waiting and not self.running
 
     def add(self, seq: Sequence):
+        """Ajoute une séquence à la file d'attente."""
         self.waiting.append(seq)
 
     def schedule(self) -> tuple[list[Sequence], bool]:
+        """Sélectionne un lot de séquences à traiter.
+
+        Retourne la liste des séquences et un booléen indiquant s'il
+        s'agit de la phase de pré-remplissage.
+        """
         # prefill
         scheduled_seqs = []
         num_seqs = 0
@@ -58,11 +69,13 @@ class Scheduler:
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
+        """Met une séquence en pause et libère ses blocs."""
         seq.status = SequenceStatus.WAITING
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
+        """Met à jour l'état des séquences après une étape modèle."""
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:

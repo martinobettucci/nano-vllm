@@ -1,3 +1,5 @@
+"""Définition du modèle Qwen3 en version allégée pour l'inférence."""
+
 import torch
 from torch import nn
 import torch.distributed as dist
@@ -12,6 +14,7 @@ from nanovllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 
 
 class Qwen3Attention(nn.Module):
+    """Bloc d'attention spécifique au modèle Qwen3."""
 
     def __init__(
         self,
@@ -72,6 +75,7 @@ class Qwen3Attention(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
+        """Applique l'attention à une séquence."""
         qkv = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q_by_head = q.view(-1, self.num_heads, self.head_dim)
@@ -87,6 +91,7 @@ class Qwen3Attention(nn.Module):
 
 
 class Qwen3MLP(nn.Module):
+    """Implémente la partie MLP d'un bloc Transformer."""
 
     def __init__(
         self,
@@ -109,6 +114,7 @@ class Qwen3MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
+        """Passe l'entrée dans le MLP avec activation."""
         gate_up = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x = self.down_proj(x)
@@ -116,6 +122,7 @@ class Qwen3MLP(nn.Module):
 
 
 class Qwen3DecoderLayer(nn.Module):
+    """Une couche du décodeur de Qwen3."""
 
     def __init__(
         self,
@@ -147,6 +154,7 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Exécute une couche complète du décodeur."""
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -159,6 +167,7 @@ class Qwen3DecoderLayer(nn.Module):
 
 
 class Qwen3Model(nn.Module):
+    """Empile plusieurs couches pour former le corps du modèle."""
 
     def __init__(
         self,
@@ -174,6 +183,7 @@ class Qwen3Model(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
     ) -> torch.Tensor:
+        """Fait passer les entrées dans toutes les couches du modèle."""
         hidden_states = self.embed_tokens(input_ids)
         residual = None
         for layer in self.layers:
@@ -183,6 +193,7 @@ class Qwen3Model(nn.Module):
 
 
 class Qwen3ForCausalLM(nn.Module):
+    """Ajoute la tête de langage au modèle de base."""
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
@@ -206,6 +217,7 @@ class Qwen3ForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
     ) -> torch.Tensor:
+        """Propage les entrées à travers le modèle base."""
         hidden_states = self.model(input_ids, positions)
         return hidden_states
 
@@ -213,5 +225,6 @@ class Qwen3ForCausalLM(nn.Module):
         self,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
+        """Calcule les probabilités sur le vocabulaire."""
         logits = self.lm_head(hidden_states)
         return logits

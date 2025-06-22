@@ -1,3 +1,5 @@
+"""Fonctions utilitaires pour charger les poids des modèles."""
+
 import os
 from glob import glob
 import torch
@@ -6,10 +8,12 @@ from safetensors import safe_open
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
+    """Copie simple des poids chargés dans le paramètre."""
     param.data.copy_(loaded_weight)
 
 
 def load_model(model: nn.Module, path: str):
+    """Charge les poids `safetensors` dans le modèle fourni."""
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     for file in glob(os.path.join(path, "*.safetensors")):
         with safe_open(file, "pt", "cpu") as f:

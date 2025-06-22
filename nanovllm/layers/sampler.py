@@ -1,13 +1,17 @@
+"""Module responsable de choisir le prochain token."""
+
 import torch
 from torch import nn
 
 
 class Sampler(nn.Module):
+    """Effectue un échantillonnage avec température."""
 
     def __init__(self):
         super().__init__()
 
     def forward(self, logits: torch.Tensor, temperatures: torch.Tensor):
+        """Retourne un token par séquence selon la température fournie."""
         logits = logits.to(torch.float)
         greedy_tokens = logits.argmax(dim=-1)
         logits.div_(temperatures.unsqueeze(dim=1))

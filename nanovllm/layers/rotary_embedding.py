@@ -1,3 +1,5 @@
+"""Implémentation de l'embedding rotatif (RoPE)."""
+
 from functools import lru_cache
 import torch
 from torch import nn
@@ -8,6 +10,7 @@ def apply_rotary_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
+    """Applique la rotation des positions à un tenseur."""
     cos = cos.unsqueeze(-2)
     sin = sin.unsqueeze(-2)
     x1, x2 = torch.chunk(x.to(torch.float32), 2, dim=-1)
@@ -17,6 +20,7 @@ def apply_rotary_emb(
 
 
 class RotaryEmbedding(nn.Module):
+    """Calcule et stocke les tables sinus/cosinus."""
 
     def __init__(
         self,
@@ -43,6 +47,7 @@ class RotaryEmbedding(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Applique l'embedding rotatif aux tensors ``query`` et ``key``."""
         num_tokens = positions.size(0)
         cos_sin = self.cos_sin_cache[positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
